@@ -1,0 +1,43 @@
+# this is caddy global settings.
+{
+	experimental_http3
+	email your@email.com
+	admin off
+}
+
+##########################################################################################
+
+# change this ":80" to "www.yourdomain.com"
+# when your site are ready to go public.
+# this :80 is only here for your local test.
+
+:80 {
+
+    # change "site01" your site path
+    root *  ..\www\site01
+    
+    #You should keep these standard things, unless you know what you are doing.
+    php_fastcgi localhost:9000
+    encode zstd gzip 
+    file_server
+    header -Server
+}
+
+##########################################################################################
+
+# WebDAV example
+# The account number is jiih and the password is jiih.com
+
+# www.yourdomain.com {
+# root *  ..\www\webdav
+
+# route {
+# 	rewrite /webdav /webdav/
+# 	webdav /webdav/* {
+# 		prefix /webdav
+# 	}
+# 	file_server
+# }
+#   basicauth /webdav/* {
+#	jiih JDJhJDEwJHY1SUpDYTZram9vMWhlTU1NNGZWVk9sTXlzV3hYYmdMWnA5Ry5mbkZvOVlEUzFBU2RERzUy
+#}
