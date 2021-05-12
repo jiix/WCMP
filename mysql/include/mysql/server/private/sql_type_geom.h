@@ -67,8 +67,8 @@ public:
            geometry_type() == th->geometry_type();
   }
   bool type_can_have_key_part() const override { return true; }
-  bool subquery_type_allows_materialization(const Item *inner,
-                                            const Item *outer) const override
+  bool subquery_type_allows_materialization(const Item *, const Item *, bool)
+    const override
   {
     return false; // Materialization does not work with GEOMETRY columns
   }
@@ -108,7 +108,10 @@ public:
                                         MEM_ROOT *mem_root,
                                         Column_definition *c,
                                         handler *file,
-                                        ulonglong table_flags) const override;
+                                        ulonglong table_flags,
+                                        const Column_derived_attributes
+                                              *derived_attr)
+                                        const override;
   bool Column_definition_prepare_stage2(Column_definition *c,
                                         handler *file,
                                         ulonglong table_flags) const override;

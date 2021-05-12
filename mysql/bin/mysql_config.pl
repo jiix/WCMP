@@ -27,7 +27,7 @@
 #  All unrecognized arguments to this script are passed to mysqld.
 #
 #  NOTE: This script will only be used on Windows until solved how to
-#        handle -lmariadb  mariadbclient ws2_32 advapi32 kernel32 shlwapi crypt32 secur32 zlib   and other strings inserted that might contain
+#        handle -lmariadb  ws2_32 advapi32 kernel32 shlwapi crypt32 secur32 zlib   and other strings inserted that might contain
 #        several arguments, possibly with spaces in them.
 #
 #  NOTE: This script was deliberately written to be as close to the shell
@@ -53,7 +53,7 @@ my $cwd = cwd();
 my $basedir;
 
 my $socket  = '/tmp/mysql.sock';
-my $version = '10.5.8';
+my $version = '10.5.10';
 
 sub which
 {
@@ -150,17 +150,17 @@ my $me = get_full_path($0);
 $basedir = dirname(dirname($me)); # Remove "/bin/mysql_config" part
 
 my $ldata   = 'C:/Program Files/MariaDB 10.5/data';
-my $execdir = 'C:/Program Files (x86)/MySQL/bin';
-my $bindir  = 'C:/Program Files (x86)/MySQL/bin';
+my $execdir = 'C:/Program Files/MySQL/bin';
+my $bindir  = 'C:/Program Files/MySQL/bin';
 
 # ----------------------------------------------------------------------
 # If installed, search for the compiled in directory first (might be "lib64")
 # ----------------------------------------------------------------------
 
-my $pkglibdir = fix_path('C:/Program Files (x86)/MySQL/lib',"libmysql/relwithdebinfo",
+my $pkglibdir = fix_path('C:/Program Files/MySQL/lib',"libmysql/relwithdebinfo",
                          "libmysql/release","libmysql/debug","lib/mysql","lib");
 
-my $pkgincludedir = fix_path('C:/Program Files (x86)/MySQL/include/mysql', "include/mysql", "include");
+my $pkgincludedir = fix_path('C:/Program Files/MySQL/include/mysql', "include/mysql", "include");
 
 # Assume no argument with space in it
 my @ldflags = split(" ",'');
@@ -199,9 +199,9 @@ my $flags;
 $flags->{libs} =
   [@ldflags,@lib_opts,'','','',''];
 $flags->{libs_r} =
-  [@ldflags,@lib_r_opts,'','-lmariadb  mariadbclient ws2_32 advapi32 kernel32 shlwapi crypt32 secur32 zlib  ',''];
+  [@ldflags,@lib_r_opts,'','-lmariadb  ws2_32 advapi32 kernel32 shlwapi crypt32 secur32 zlib  ',''];
 $flags->{embedded_libs} =
-  [@ldflags,@lib_e_opts,'','','-lmariadb  mariadbclient ws2_32 advapi32 kernel32 shlwapi crypt32 secur32 zlib  ','',''];
+  [@ldflags,@lib_e_opts,'','','-lmariadb  ws2_32 advapi32 kernel32 shlwapi crypt32 secur32 zlib  ','',''];
 
 $flags->{include} = ["-I$pkgincludedir"];
 $flags->{cflags}  = [@{$flags->{include}},split(" ",'')];

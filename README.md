@@ -6,11 +6,11 @@ WCMP是基于Windows x64平台下的Caddy2 + PHP + MySQL便携软件包。
 只需要下载并运行`Wcmp.exe`，你将会有一个简单易于移植的开发环境。只需要备份WCMP目录所有文件，你可以把它带到任何地方。
 
 ## 软件包版本
-* Caddy v2.3.0
-* PHP v8.0.1
-* MariaDB v10.5.8
+* Caddy v2.4.0
+* PHP v8.0.6
+* MariaDB v10.5.10
 * SQLite v3.33.0
-* Adminer v4.7.8
+* Adminer v4.8.0
 
 ## 说明:
 

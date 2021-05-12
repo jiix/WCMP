@@ -84,7 +84,6 @@ class Spvar_definition;
 struct st_value;
 class Protocol;
 class handler;
-struct Schema_specification_st;
 struct TABLE;
 struct SORT_FIELD_ATTR;
 struct SORT_FIELD;
@@ -247,6 +246,53 @@ public:
   TypelibBuffer(const LEX_CSTRING *values)
    :TypelibBuffer(sz, values)
   { }
+};
+
+
+/*
+  A helper class to store column attributes that are inherited
+  by columns (from the table level) when not specified explicitly.
+*/
+class Column_derived_attributes
+{
+  /*
+    Table level CHARACTER SET and COLLATE value:
+
+      CREATE TABLE t1 (a VARCHAR(1), b CHAR(2)) CHARACTER SET latin1;
+
+    All character string columns (CHAR, VARCHAR, TEXT)
+    inherit CHARACTER SET from the table level.
+  */
+  CHARSET_INFO *m_charset;
+public:
+  explicit Column_derived_attributes(CHARSET_INFO *cs)
+   :m_charset(cs)
+  { }
+  CHARSET_INFO *charset() const { return m_charset; }
+};
+
+
+/*
+  A helper class to store requests for changes
+  in multiple column data types during ALTER.
+*/
+class Column_bulk_alter_attributes
+{
+  /*
+    Target CHARACTER SET specification in ALTER .. CONVERT, e.g.
+
+      ALTER TABLE t1 CONVERT TO CHARACTER SET utf8;
+
+    All character string columns (CHAR, VARCHAR, TEXT)
+    get converted to the "CONVERT TO CHARACTER SET".
+  */
+  CHARSET_INFO *m_alter_table_convert_to_charset;
+public:
+  explicit Column_bulk_alter_attributes(CHARSET_INFO *convert)
+   :m_alter_table_convert_to_charset(convert)
+  { }
+  CHARSET_INFO *alter_table_convert_to_charset() const
+  { return m_alter_table_convert_to_charset; }
 };
 
 
@@ -3883,7 +3929,17 @@ public:
                                                 MEM_ROOT *mem_root,
                                                 Column_definition *c,
                                                 handler *file,
-                                                ulonglong table_flags) const;
+                                                ulonglong table_flags,
+                                                const Column_derived_attributes
+                                                      *derived_attr)
+                                                const;
+  virtual bool Column_definition_bulk_alter(Column_definition *c,
+                                            const Column_derived_attributes
+                                                  *derived_attr,
+                                            const Column_bulk_alter_attributes
+                                                  *bulk_alter_attr)
+                                            const
+  { return false; }
   /*
     This method is called on queries like:
       CREATE TABLE t2 (a INT) AS SELECT a FROM t1;
@@ -3902,9 +3958,7 @@ public:
   */
   virtual bool Column_definition_redefine_stage1(Column_definition *def,
                                                  const Column_definition *dup,
-                                                 const handler *file,
-                                                 const Schema_specification_st *
-                                                       schema)
+                                                 const handler *file)
                                                  const;
   virtual bool Column_definition_prepare_stage2(Column_definition *c,
                                                 handler *file,
@@ -4049,9 +4103,21 @@ public:
                                Item *target_expr, Item *target_value,
                                Item_bool_func2 *source,
                                Item *source_expr, Item *source_const) const= 0;
+
+  /*
+    @brief
+      Check if an IN subquery allows materialization or not
+    @param
+      inner              expression on the inner side of the IN subquery
+      outer              expression on the outer side of the IN subquery
+      is_in_predicate    SET to true if IN subquery was converted from an
+                         IN predicate or we are checking if materialization
+                         strategy can be used for an IN predicate
+  */
   virtual bool
   subquery_type_allows_materialization(const Item *inner,
-                                       const Item *outer) const= 0;
+                                       const Item *outer,
+                                       bool is_in_predicate) const= 0;
   /**
     Make a simple constant replacement item for a constant "src",
     so the new item can futher be used for comparison with "cmp", e.g.:
@@ -4311,8 +4377,8 @@ public:
     DBUG_ASSERT(0);
     return 0;
   }
-  bool subquery_type_allows_materialization(const Item *inner,
-                                            const Item *outer) const override
+  bool subquery_type_allows_materialization(const Item *, const Item *,
+                                            bool) const override
   {
     DBUG_ASSERT(0);
     return false;
@@ -4345,11 +4411,13 @@ public:
                                         MEM_ROOT *mem_root,
                                         Column_definition *c,
                                         handler *file,
-                                        ulonglong table_flags) const override;
+                                        ulonglong table_flags,
+                                        const Column_derived_attributes
+                                              *derived_attr)
+                                        const override;
   bool Column_definition_redefine_stage1(Column_definition *def,
                                          const Column_definition *dup,
-                                         const handler *file,
-                                         const Schema_specification_st *schema)
+                                         const handler *file)
                                          const override
   {
     DBUG_ASSERT(0);
@@ -4663,6 +4731,14 @@ public:
   String *print_item_value(THD *thd, Item *item, String *str) const override;
   double Item_func_min_max_val_real(Item_func_min_max *) const override;
   longlong Item_func_min_max_val_int(Item_func_min_max *) const override;
+  bool Column_definition_prepare_stage1(THD *thd,
+                                        MEM_ROOT *mem_root,
+                                        Column_definition *c,
+                                        handler *file,
+                                        ulonglong table_flags,
+                                        const Column_derived_attributes
+                                              *derived_attr)
+                                        const override;
   my_decimal *Item_func_min_max_val_decimal(Item_func_min_max *,
                                             my_decimal *) const override;
   bool Item_func_min_max_get_date(THD *thd, Item_func_min_max*,
@@ -4714,7 +4790,8 @@ public:
   int stored_field_cmp_to_item(THD *thd, Field *field, Item *item)
                                const override;
   bool subquery_type_allows_materialization(const Item *inner,
-                                            const Item *outer)
+                                            const Item *outer,
+                                            bool is_in_predicate)
                                             const override;
   void make_sort_key_part(uchar *to, Item *item,
                           const SORT_FIELD_ATTR *sort_field,
@@ -4819,7 +4896,9 @@ public:
     return item_val.is_null() ? 0 : my_decimal(field).cmp(item_val.ptr());
   }
   bool subquery_type_allows_materialization(const Item *inner,
-                                            const Item *outer) const override;
+                                            const Item *outer,
+                                            bool is_in_predicate)
+    const override;
   Field *make_schema_field(MEM_ROOT *root,
                            TABLE *table,
                            const Record_addr &addr,
@@ -5073,7 +5152,9 @@ public:
   const Type_handler *type_handler_for_comparison() const override;
   int stored_field_cmp_to_item(THD *thd, Field *field, Item *item) const override;
   bool subquery_type_allows_materialization(const Item *inner,
-                                            const Item *outer) const override;
+                                            const Item *outer,
+                                            bool is_in_predicate)
+    const override;
   Field *make_num_distinct_aggregator_field(MEM_ROOT *, const Item *) const override;
   Field *make_table_field(MEM_ROOT *root,
                           const LEX_CSTRING *name,
@@ -5200,6 +5281,14 @@ public:
   void sort_length(THD *thd,
                    const Type_std_attributes *item,
                    SORT_FIELD_ATTR *attr) const override;
+  bool Column_definition_prepare_stage1(THD *thd,
+                                        MEM_ROOT *mem_root,
+                                        Column_definition *c,
+                                        handler *file,
+                                        ulonglong table_flags,
+                                        const Column_derived_attributes
+                                              *derived_attr)
+                                        const override;
   bool Item_const_eq(const Item_const *a, const Item_const *b,
                      bool binary_cmp) const override;
   bool Item_param_set_from_value(THD *thd,
@@ -5214,7 +5303,9 @@ public:
                                    Item *source_expr, Item *source_const)
     const override;
   bool subquery_type_allows_materialization(const Item *inner,
-                                            const Item *outer) const override;
+                                            const Item *outer,
+                                            bool is_in_predicate)
+    const override;
   bool Item_func_min_max_fix_attributes(THD *thd, Item_func_min_max *func,
                                         Item **items, uint nitems)
     const override;
@@ -5298,11 +5389,13 @@ public:
                                         MEM_ROOT *mem_root,
                                         Column_definition *c,
                                         handler *file,
-                                        ulonglong table_flags) const override;
+                                        ulonglong table_flags,
+                                        const Column_derived_attributes
+                                              *derived_attr)
+                                        const override;
   bool Column_definition_redefine_stage1(Column_definition *def,
                                          const Column_definition *dup,
-                                         const handler *file,
-                                         const Schema_specification_st *schema)
+                                         const handler *file)
                                          const override;
   void
   Column_definition_attributes_frm_pack(const Column_definition_attributes *at,
@@ -5352,7 +5445,9 @@ public:
                                    Item *source_expr, Item *source_const) const
     override;
   bool subquery_type_allows_materialization(const Item *inner,
-                                            const Item *outer) const override;
+                                            const Item *outer,
+                                            bool is_in_predicate)
+    const override;
   Item *make_const_item_for_comparison(THD *, Item *src, const Item *cmp) const
     override;
   Item_cache *Item_get_cache(THD *thd, const Item *item) const override;
@@ -5429,6 +5524,12 @@ class Type_handler_general_purpose_string: public Type_handler_string_result
 {
 public:
   bool is_general_purpose_string_type() const override { return true; }
+  bool Column_definition_bulk_alter(Column_definition *c,
+                                    const Column_derived_attributes
+                                          *derived_attr,
+                                    const Column_bulk_alter_attributes
+                                          *bulk_alter_attr)
+                                    const override;
 };
 
 
@@ -5821,11 +5922,13 @@ public:
                                         MEM_ROOT *mem_root,
                                         Column_definition *c,
                                         handler *file,
-                                        ulonglong table_flags) const override;
+                                        ulonglong table_flags,
+                                        const Column_derived_attributes
+                                              *derived_attr)
+                                        const override;
   bool Column_definition_redefine_stage1(Column_definition *def,
                                          const Column_definition *dup,
-                                         const handler *file,
-                                         const Schema_specification_st *schema)
+                                         const handler *file)
                                          const override;
   bool Column_definition_prepare_stage2(Column_definition *c,
                                         handler *file,
@@ -6669,11 +6772,13 @@ public:
                                         MEM_ROOT *mem_root,
                                         Column_definition *c,
                                         handler *file,
-                                        ulonglong table_flags) const override;
+                                        ulonglong table_flags,
+                                        const Column_derived_attributes
+                                              *derived_attr)
+                                        const override;
   bool Column_definition_redefine_stage1(Column_definition *def,
                                          const Column_definition *dup,
-                                         const handler *file,
-                                         const Schema_specification_st *schema)
+                                         const handler *file)
                                          const override;
   bool Column_definition_prepare_stage2(Column_definition *c,
                                         handler *file,
@@ -6724,11 +6829,13 @@ public:
                                         MEM_ROOT *mem_root,
                                         Column_definition *c,
                                         handler *file,
-                                        ulonglong table_flags) const override;
+                                        ulonglong table_flags,
+                                        const Column_derived_attributes
+                                              *derived_attr)
+                                        const override;
   bool Column_definition_redefine_stage1(Column_definition *def,
                                          const Column_definition *dup,
-                                         const handler *file,
-                                         const Schema_specification_st *schema)
+                                         const handler *file)
                                          const override;
   bool Column_definition_prepare_stage2(Column_definition *c,
                                         handler *file,
@@ -6983,8 +7090,8 @@ public:
   {
     return blob_type_handler(item);
   }
-  bool subquery_type_allows_materialization(const Item *inner,
-                                            const Item *outer) const override
+  bool subquery_type_allows_materialization(const Item *, const Item *, bool)
+    const override
   {
     return false; // Materialization does not work with BLOB columns
   }
@@ -7114,7 +7221,7 @@ public:
   {
     return MYSQL_TYPE_BLOB_COMPRESSED;
   }
-  ulong KEY_pack_flags(uint column_nr) const override
+  ulong KEY_pack_flags(uint) const override
   {
     DBUG_ASSERT(0);
     return 0;
@@ -7125,7 +7232,7 @@ public:
   Field *make_conversion_table_field(MEM_ROOT *root,
                                      TABLE *table, uint metadata,
                                      const Field *target) const override;
-  enum_dynamic_column_type dyncol_type(const Type_all_attributes *attr)
+  enum_dynamic_column_type dyncol_type(const Type_all_attributes *)
                                        const override
   {
     DBUG_ASSERT(0);
@@ -7158,12 +7265,13 @@ public:
                                         MEM_ROOT *mem_root,
                                         Column_definition *c,
                                         handler *file,
-                                        ulonglong table_flags)
+                                        ulonglong table_flags,
+                                        const Column_derived_attributes
+                                              *derived_attr)
                                         const override;
   bool Column_definition_redefine_stage1(Column_definition *def,
                                          const Column_definition *dup,
-                                         const handler *file,
-                                         const Schema_specification_st *schema)
+                                         const handler *file)
                                          const override;
   void Item_param_set_param_func(Item_param *param,
                                  uchar **pos, ulong len) const override;

@@ -1,6 +1,6 @@
 /*
    Copyright (c) 2000, 2016, Oracle and/or its affiliates.
-   Copyright (c) 2009, 2020, MariaDB Corporation.
+   Copyright (c) 2009, 2021, MariaDB Corporation.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -641,7 +641,6 @@ typedef struct system_variables
   ulonglong bulk_insert_buff_size;
   ulonglong join_buff_size;
   ulonglong sortbuff_size;
-  ulonglong group_concat_max_len;
   ulonglong default_regex_flags;
   ulonglong max_mem_used;
 
@@ -665,6 +664,7 @@ typedef struct system_variables
     are based on the cluster size):
   */
   ulong saved_auto_increment_increment, saved_auto_increment_offset;
+  ulong saved_lock_wait_timeout;
   ulonglong wsrep_gtid_seq_no;
 #endif /* WITH_WSREP */
   uint eq_range_index_dive_limit;
@@ -733,6 +733,8 @@ typedef struct system_variables
   */
   uint32     gtid_domain_id;
   uint64     gtid_seq_no;
+
+  uint group_concat_max_len;
 
   /**
     Default transaction access mode. READ ONLY (true) or READ WRITE (false).
@@ -814,6 +816,7 @@ typedef struct system_variables
   uint column_compression_threshold;
   uint column_compression_zlib_level;
   uint in_subquery_conversion_threshold;
+  ulong optimizer_max_sel_arg_weight;
   ulonglong max_rowid_filter_size;
 
   vers_asof_timestamp_t vers_asof_timestamp;
@@ -985,11 +988,24 @@ void add_to_status(STATUS_VAR *to_var, STATUS_VAR *from_var);
 void add_diff_to_status(STATUS_VAR *to_var, STATUS_VAR *from_var,
                         STATUS_VAR *dec_var);
 
+uint calc_sum_of_all_status(STATUS_VAR *to);
+static inline void calc_sum_of_all_status_if_needed(STATUS_VAR *to)
+{
+  if (to->local_memory_used == 0)
+  {
+    mysql_mutex_lock(&LOCK_status);
+    *to= global_status_var;
+    mysql_mutex_unlock(&LOCK_status);
+    calc_sum_of_all_status(to);
+    DBUG_ASSERT(to->local_memory_used);
+  }
+}
+
 /*
   Update global_memory_used. We have to do this with atomic_add as the
   global value can change outside of LOCK_status.
 */
-inline void update_global_memory_status(int64 size)
+static inline void update_global_memory_status(int64 size)
 {
   DBUG_PRINT("info", ("global memory_used: %lld  size: %lld",
                       (longlong) global_status_var.global_memory_used,
@@ -1007,7 +1023,7 @@ inline void update_global_memory_status(int64 size)
   @retval         NULL on error
   @retval         Pointter to CHARSET_INFO with the given name on success
 */
-inline CHARSET_INFO *
+static inline CHARSET_INFO *
 mysqld_collation_get_by_name(const char *name,
                              CHARSET_INFO *name_cs= system_charset_info)
 {
@@ -1026,7 +1042,7 @@ mysqld_collation_get_by_name(const char *name,
   return cs;
 }
 
-inline bool is_supported_parser_charset(CHARSET_INFO *cs)
+static inline bool is_supported_parser_charset(CHARSET_INFO *cs)
 {
   return MY_TEST(cs->mbminlen == 1);
 }
@@ -2379,7 +2395,7 @@ public:
     - mysys_var (used by KILL statement and shutdown).
     - Also ensures that THD is not deleted while mutex is hold
   */
-  mysql_mutex_t LOCK_thd_kill;
+  mutable mysql_mutex_t LOCK_thd_kill;
 
   /* all prepared statements and cursors of this connection */
   Statement_map stmt_map;
@@ -3448,19 +3464,13 @@ public:
   void awake_no_mutex(killed_state state_to_set);
   void awake(killed_state state_to_set)
   {
-    bool wsrep_on_local= WSREP_NNULL(this);
-    /*
-      mutex locking order (LOCK_thd_data - LOCK_thd_kill)) requires
-      to grab LOCK_thd_data here
-    */
-    if (wsrep_on_local)
-      mysql_mutex_lock(&LOCK_thd_data);
     mysql_mutex_lock(&LOCK_thd_kill);
+    mysql_mutex_lock(&LOCK_thd_data);
     awake_no_mutex(state_to_set);
+    mysql_mutex_unlock(&LOCK_thd_data);
     mysql_mutex_unlock(&LOCK_thd_kill);
-    if (wsrep_on_local)
-      mysql_mutex_unlock(&LOCK_thd_data);
   }
+  void abort_current_cond_wait(bool force);
  
   /** Disconnect the associated communication endpoint. */
   void disconnect();
@@ -3789,10 +3799,6 @@ public:
       return FALSE;
     give_protection_error();
     return TRUE;
-  }
-  inline bool fill_derived_tables()
-  {
-    return !stmt_arena->is_stmt_prepare() && !lex->only_view_structure();
   }
   inline bool fill_information_schema_tables()
   {
@@ -4216,8 +4222,7 @@ public:
     mysql_mutex_lock(&LOCK_thd_kill);
     int err= killed_errno();
     if (err)
-      my_message(err, killed_err ? killed_err->msg : ER_THD(this, err),
-                 MYF(0));
+      my_message(err, killed_err ? killed_err->msg : ER_THD(this, err), MYF(0));
     mysql_mutex_unlock(&LOCK_thd_kill);
   }
   /* return TRUE if we will abort query if we make a warning now */
@@ -4730,6 +4735,13 @@ public:
     locked_tables_mode= mode_arg;
   }
   void leave_locked_tables_mode();
+  /* Relesae transactional locks if there are no active transactions */
+  void release_transactional_locks()
+  {
+    if (!(server_status &
+          (SERVER_STATUS_IN_TRANS | SERVER_STATUS_IN_TRANS_READONLY)))
+      mdl_context.release_transactional_locks(this);
+  }
   int decide_logging_format(TABLE_LIST *tables);
   /*
    In Some cases when decide_logging_format is called it does not have all
@@ -6133,10 +6145,15 @@ class select_union_recursive :public select_unit
  public:
   /* The temporary table with the new records generated by one iterative step */
   TABLE *incr_table;
+  /* The TMP_TABLE_PARAM structure used to create incr_table */
+  TMP_TABLE_PARAM incr_table_param;
   /* One of tables from the list rec_tables (determined dynamically) */
   TABLE *first_rec_table_to_update;
-  /* The temporary tables used for recursive table references */
-  List<TABLE> rec_tables;
+  /*
+    The list of all recursive table references to the CTE for whose
+    specification this select_union_recursive was created
+ */
+  List<TABLE_LIST> rec_table_refs;
   /*
     The count of how many times cleanup() was called with cleaned==false
     for the unit specifying the recursive CTE for which this object was created
@@ -6146,7 +6163,8 @@ class select_union_recursive :public select_unit
 
   select_union_recursive(THD *thd_arg):
     select_unit(thd_arg),
-    incr_table(0), first_rec_table_to_update(0), cleanup_count(0) {};
+    incr_table(0), first_rec_table_to_update(0), cleanup_count(0)
+  { incr_table_param.init(); };
 
   int send_data(List<Item> &items);
   bool create_result_table(THD *thd, List<Item> *column_types,
@@ -6381,11 +6399,13 @@ public:
    - The sj-materialization temporary table
    - Members needed to make index lookup or a full scan of the temptable.
 */
+class POSITION;
+
 class SJ_MATERIALIZATION_INFO : public Sql_alloc
 {
 public:
   /* Optimal join sub-order */
-  struct st_position *positions;
+  POSITION *positions;
 
   uint tables; /* Number of tables in the sj-nest */
 
@@ -6643,7 +6663,8 @@ public:
 class multi_update :public select_result_interceptor
 {
   TABLE_LIST *all_tables; /* query/update command tables */
-  List<TABLE_LIST> *leaves;     /* list of leves of join table tree */
+  List<TABLE_LIST> *leaves;     /* list of leaves of join table tree */
+  List<TABLE_LIST> updated_leaves;  /* list of of updated leaves */
   TABLE_LIST *update_tables;
   TABLE **tmp_tables, *main_table, *table_to_update;
   TMP_TABLE_PARAM *tmp_table_param;
@@ -6681,6 +6702,7 @@ public:
 	       List<Item> *fields, List<Item> *values,
 	       enum_duplicates handle_duplicates, bool ignore);
   ~multi_update();
+  bool init(THD *thd);
   int prepare(List<Item> &list, SELECT_LEX_UNIT *u);
   int send_data(List<Item> &items);
   bool initialize_tables (JOIN *join);

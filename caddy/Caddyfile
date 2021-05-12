@@ -1,12 +1,3 @@
-# this is caddy global settings.
-{
-	experimental_http3
-	email your@email.com
-	admin off
-}
-
-##########################################################################################
-
 # change this ":80" to "www.yourdomain.com"
 # when your site are ready to go public.
 # this :80 is only here for your local test.
@@ -26,7 +17,7 @@
 ##########################################################################################
 
 # WebDAV example
-# The account number is jiih and the password is jiih.com
+# The account is jiih and the password is jiih.com
 
 # www.yourdomain.com {
 # root *  ..\www\webdav

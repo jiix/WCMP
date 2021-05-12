@@ -42,6 +42,7 @@
 #define HAVE_LIMITS_H 1
 /* #undef HAVE_LINK_H */
 /* #undef HAVE_LINUX_UNISTD_H */
+/* #undef HAVE_LINUX_MMAN_H */
 #define HAVE_LOCALE_H 1
 #define HAVE_MALLOC_H 1
 #define HAVE_MEMORY_H 1
@@ -168,6 +169,8 @@
 /* #undef HAVE_DECL_MADVISE */
 /* #undef HAVE_DECL_MHA_MAPSIZE_VA */
 /* #undef HAVE_MALLINFO */
+/* #undef HAVE_MALLINFO2 */
+/* #undef HAVE_MALLOC_ZONE */
 #define HAVE_MEMCPY 1
 #define HAVE_MEMMOVE 1
 /* #undef HAVE_MKSTEMP */
@@ -525,16 +528,16 @@
 
 #define MYSQL_VERSION_MAJOR 10
 #define MYSQL_VERSION_MINOR 5
-#define MYSQL_VERSION_PATCH 8
+#define MYSQL_VERSION_PATCH 10
 #define MYSQL_VERSION_EXTRA ""
 
 #define PACKAGE "mysql"
 #define PACKAGE_BUGREPORT ""
 #define PACKAGE_NAME "MySQL Server"
-#define PACKAGE_STRING "MySQL Server 10.5.8"
+#define PACKAGE_STRING "MySQL Server 10.5.10"
 #define PACKAGE_TARNAME "mysql"
-#define PACKAGE_VERSION "10.5.8"
-#define VERSION "10.5.8"
+#define PACKAGE_VERSION "10.5.10"
+#define VERSION "10.5.10"
 #define PROTOCOL_VERSION 10
 #define PCRE2_CODE_UNIT_WIDTH 8
 

@@ -1,5 +1,5 @@
 /* Copyright (c) 2000, 2019, Oracle and/or its affiliates.
-   Copyright (c) 2010, 2020, MariaDB Corporation.
+   Copyright (c) 2010, 2021, MariaDB Corporation
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -530,7 +530,7 @@ struct LEX_MASTER_INFO
     }
 
     host= user= password= log_file_name= ssl_key= ssl_cert= ssl_ca=
-      ssl_capath= ssl_cipher= relay_log_name= 0;
+      ssl_capath= ssl_cipher= ssl_crl= ssl_crlpath= relay_log_name= NULL;
     pos= relay_log_pos= server_id= port= connect_retry= 0;
     heartbeat_period= 0;
     ssl= ssl_verify_server_cert= heartbeat_opt=
@@ -793,7 +793,7 @@ public:
     link_next= NULL;
     link_prev= NULL;
   }
-
+  void substitute_in_tree(st_select_lex_node *subst);
 
   void set_slave(st_select_lex_node *slave_arg) { slave= slave_arg; }
   void move_node(st_select_lex_node *where_to_move)
@@ -966,6 +966,10 @@ public:
 
   void init_query();
   st_select_lex* outer_select();
+  const st_select_lex* first_select() const
+  {
+    return reinterpret_cast<const st_select_lex*>(slave);
+  }
   st_select_lex* first_select()
   {
     return reinterpret_cast<st_select_lex*>(slave);
@@ -1113,7 +1117,7 @@ public:
   */
   LEX *parent_lex;
   enum olap_type olap;
-  /* FROM clause - points to the beginning of the TABLE_LIST::next_local list. */
+  /* FROM clause - points to the beginning of the TABLE_LIST::next_local list */
   SQL_I_List<TABLE_LIST>  table_list;
 
   /*
@@ -1129,8 +1133,8 @@ public:
   List<Item>          pre_fix; /* above list before fix_fields */
   bool                is_item_list_lookup;
   /* 
-    Usualy it is pointer to ftfunc_list_alloc, but in union used to create fake
-    select_lex for calling mysql_select under results of union
+    Usually it is pointer to ftfunc_list_alloc, but in union used to create
+    fake select_lex for calling mysql_select under results of union
   */
   List<Item_func_match> *ftfunc_list;
   List<Item_func_match> ftfunc_list_alloc;
@@ -1331,6 +1335,8 @@ public:
   /* it is for correct printing SELECT options */
   thr_lock_type lock_type;
   
+  List<List_item> save_many_values;
+  List<Item> *save_insert_list;
   table_value_constr *tvc;
   bool in_tvc;
 
@@ -1376,7 +1382,8 @@ public:
   }
   inline bool is_subquery_function() { return master_unit()->item != 0; }
 
-  bool mark_as_dependent(THD *thd, st_select_lex *last, Item *dependency);
+  bool mark_as_dependent(THD *thd, st_select_lex *last,
+                         Item_ident *dependency);
 
   void set_braces(bool value)
   {
@@ -1511,6 +1518,8 @@ public:
 
   bool save_leaf_tables(THD *thd);
   bool save_prep_leaf_tables(THD *thd);
+
+  void set_unique_exclude();
 
   bool is_merged_child_of(st_select_lex *ancestor);
 
@@ -3142,7 +3151,8 @@ public:
 struct LEX: public Query_tables_list
 {
   SELECT_LEX_UNIT unit;                         /* most upper unit */
-  inline SELECT_LEX *first_select_lex() {return unit.first_select();}
+  SELECT_LEX *first_select_lex() { return unit.first_select(); }
+  const SELECT_LEX *first_select_lex() const { return unit.first_select(); }
 
 private:
   SELECT_LEX builtin_select;
@@ -4428,6 +4438,25 @@ public:
     return false;
   }
 
+  bool create_like() const
+  {
+    DBUG_ASSERT(!create_info.like() ||
+                !first_select_lex()->item_list.elements);
+    return create_info.like();
+  }
+
+  bool create_select() const
+  {
+    DBUG_ASSERT(!create_info.like() ||
+                !first_select_lex()->item_list.elements);
+    return first_select_lex()->item_list.elements;
+  }
+
+  bool create_simple() const
+  {
+    return !create_like() && !create_select();
+  }
+
   SELECT_LEX *exclude_last_select();
   SELECT_LEX *exclude_not_first_select(SELECT_LEX *exclude);
   void check_automatic_up(enum sub_select_type type);
@@ -4469,6 +4498,12 @@ public:
 
   int add_period(Lex_ident name, Lex_ident_sys_st start, Lex_ident_sys_st end)
   {
+    if (lex_string_cmp(system_charset_info, &start, &end) == 0)
+    {
+      my_error(ER_FIELD_SPECIFIED_TWICE, MYF(0), start.str);
+      return 1;
+    }
+
     Table_period_info &info= create_info.period_info;
 
     if (check_exists && info.name.streq(name))
@@ -4509,13 +4544,6 @@ public:
       return true;
     }
     return false;
-  }
-
-  void tvc_start()
-  {
-    field_list.empty();
-    many_values.empty();
-    insert_list= 0;
   }
 
   SELECT_LEX_UNIT *alloc_unit();
@@ -4583,6 +4611,8 @@ public:
                                        bool distinct);
   SELECT_LEX *parsed_subselect(SELECT_LEX_UNIT *unit);
   bool parsed_insert_select(SELECT_LEX *firs_select);
+  void save_values_list_state();
+  void restore_values_list_state();
   bool parsed_TVC_start();
   SELECT_LEX *parsed_TVC_end();
   TABLE_LIST *parsed_derived_table(SELECT_LEX_UNIT *unit,
@@ -5001,8 +5031,8 @@ extern void lex_init(void);
 extern void lex_free(void);
 extern void lex_start(THD *thd);
 extern void lex_end(LEX *lex);
-extern void lex_end_stage1(LEX *lex);
-extern void lex_end_stage2(LEX *lex);
+extern void lex_end_nops(LEX *lex);
+extern void lex_unlock_plugins(LEX *lex);
 void end_lex_with_single_table(THD *thd, TABLE *table, LEX *old_lex);
 int init_lex_with_single_table(THD *thd, TABLE *table, LEX *lex);
 extern int MYSQLlex(union YYSTYPE *yylval, THD *thd);

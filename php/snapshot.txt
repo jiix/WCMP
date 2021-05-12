@@ -1,7 +1,7 @@
 This snapshot was automatically generated on
-Tue, 05 Jan 2021 23:12:26 +0000
+Tue, 04 May 2021 23:00:39 +0000
 
-Version: 8.0.1
+Version: 8.0.6
 Branch: HEAD
 Build: C:\php-snap-build\php80\vs16\x64\obj\Release
 

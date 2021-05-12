@@ -50,7 +50,11 @@ class Item_subselect :public Item_result_field,
                       protected Used_tables_and_const_cache,
                       protected With_sum_func_cache
 {
-  bool value_assigned;   /* value already assigned to subselect */
+  /*
+    Set to TRUE if the value is assigned for the subselect
+    FALSE: subquery not executed or the subquery returns an empty result
+  */
+  bool value_assigned;
   bool own_engine;  /* the engine was not taken from other Item_subselect */
 protected:
   /* thread handler, will be assigned in fix_fields only */
@@ -256,6 +260,7 @@ public:
     @retval FALSE otherwise
   */
   bool is_expensive_processor(void *arg) override { return is_expensive(); }
+  bool update_table_bitmaps_processor(void *arg) override;
 
   /**
     Get the SELECT_LEX structure associated with this Item.
@@ -277,7 +282,7 @@ public:
   Item* build_clone(THD *thd) override { return 0; }
   Item* get_copy(THD *thd) override { return 0; }
 
-  bool wrap_tvc_into_select(THD *thd, st_select_lex *tvc_sl);
+  st_select_lex *wrap_tvc_into_select(THD *thd, st_select_lex *tvc_sl);
 
   friend class select_result_interceptor;
   friend class Item_in_optimizer;
@@ -286,7 +291,8 @@ public:
   friend bool Item_ref::fix_fields(THD *, Item **);
   friend void mark_select_range_as_dependent(THD*,
                                              st_select_lex*, st_select_lex*,
-                                             Field*, Item*, Item_ident*);
+                                             Field*, Item*, Item_ident*,
+                                             bool);
   friend bool convert_join_subqueries_to_semijoins(JOIN *join);
 };
 
@@ -613,12 +619,18 @@ public:
 
   Item_func_not_all *upper_item; // point on NOT/NOP before ALL/SOME subquery
 
+  /*
+    SET to TRUE if IN subquery is converted from an IN predicate
+  */
+  bool converted_from_in_predicate;
+
   Item_in_subselect(THD *thd_arg, Item * left_expr, st_select_lex *select_lex);
   Item_in_subselect(THD *thd_arg):
     Item_exists_subselect(thd_arg), left_expr_cache(0), first_execution(TRUE),
     in_strategy(SUBS_NOT_TRANSFORMED),
     pushed_cond_guards(NULL), func(NULL), do_not_convert_to_sj(FALSE),
-    is_jtbm_merged(FALSE), is_jtbm_const_tab(FALSE), upper_item(0) {}
+    is_jtbm_merged(FALSE), is_jtbm_const_tab(FALSE), upper_item(0),
+    converted_from_in_predicate(FALSE) {}
   void cleanup() override;
   subs_type substype() override { return IN_SUBS; }
   void reset() override

@@ -374,11 +374,14 @@ static inline int wsrep_before_rollback(THD* thd, bool all)
       }
 
       if (thd->wsrep_trx().is_streaming() &&
-          !wsrep_stmt_rollback_is_safe(thd))
+          (wsrep_fragments_certified_for_stmt(thd) > 0))
       {
         /* Non-safe statement rollback during SR multi statement
-           transasction. Self abort the transaction, the actual rollback
-           and error handling will be done in after statement phase. */
+           transaction. A statement rollback is considered unsafe, if
+           the same statement has already replicated one or more fragments.
+           Self abort the transaction, the actual rollback and error
+           handling will be done in after statement phase. */
+        WSREP_DEBUG("statement rollback is not safe for streaming replication");
         wsrep_thd_self_abort(thd);
         ret= 0;
       }
@@ -439,8 +442,10 @@ static inline void wsrep_after_apply(THD* thd)
 static inline void wsrep_open(THD* thd)
 {
   DBUG_ENTER("wsrep_open");
-  if (WSREP(thd))
+  if (WSREP_ON_)
   {
+    /* WSREP_PROVIDER_EXISTS_ cannot be set if WSREP_ON_ is not set */
+    DBUG_ASSERT(WSREP_PROVIDER_EXISTS_);
     thd->wsrep_cs().open(wsrep::client_id(thd->thread_id));
     thd->wsrep_cs().debug_log_level(wsrep_debug);
     if (!thd->wsrep_applier && thd->variables.wsrep_trx_fragment_size)
@@ -464,6 +469,16 @@ static inline void wsrep_close(THD* thd)
   DBUG_VOID_RETURN;
 }
 
+static inline void wsrep_cleanup(THD* thd)
+{
+  DBUG_ENTER("wsrep_cleanup");
+  if (thd->wsrep_cs().state() != wsrep::client_state::s_none)
+  {
+    thd->wsrep_cs().cleanup();
+  }
+  DBUG_VOID_RETURN;
+}
+
 static inline void
 wsrep_wait_rollback_complete_and_acquire_ownership(THD *thd)
 {
@@ -476,12 +491,18 @@ wsrep_wait_rollback_complete_and_acquire_ownership(THD *thd)
   DBUG_VOID_RETURN;
 }
 
-static inline int wsrep_before_command(THD* thd)
+static inline int wsrep_before_command(THD* thd, bool keep_command_error)
 {
   return (thd->wsrep_cs().state() != wsrep::client_state::s_none &&
           !thd->internal_transaction() ?
-          thd->wsrep_cs().before_command() : 0);
+          thd->wsrep_cs().before_command(keep_command_error) : 0);
 }
+
+static inline int wsrep_before_command(THD* thd)
+{
+  return wsrep_before_command(thd, false);
+}
+
 /*
   Called after each command.
 

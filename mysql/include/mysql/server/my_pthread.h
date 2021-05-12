@@ -197,7 +197,6 @@ static inline int my_sigwait(sigset_t *set, int *sig, int *code)
   *code= siginfo.si_code;
   return *sig < 0 ?  errno : 0;
 #else
-#define SI_KERNEL 128
   *code= 0;
   return sigwait(set, sig);
 #endif
@@ -667,7 +666,11 @@ extern void my_mutex_end(void);
   with the current number of keys and key parts.
 */
 #if defined(__SANITIZE_ADDRESS__) || defined(WITH_UBSAN)
+#ifndef DBUG_OFF
+#define DEFAULT_THREAD_STACK	(1024*1024L)
+#else
 #define DEFAULT_THREAD_STACK	(383*1024L) /* 392192 */
+#endif
 #else
 #define DEFAULT_THREAD_STACK	(292*1024L) /* 299008 */
 #endif

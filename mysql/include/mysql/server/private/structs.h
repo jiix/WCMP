@@ -92,7 +92,7 @@ class engine_option_value;
 struct ha_index_option_struct;
 
 typedef struct st_key {
-  uint	key_length;			/* Tot length of key */
+  uint	key_length;			/* total length of user defined key parts  */
   ulong flags;                          /* dupp key and pack flags */
   uint	user_defined_key_parts;	   /* How many key_parts */
   uint	usable_key_parts; /* Should normally be = user_defined_key_parts */
@@ -874,7 +874,13 @@ public:
   Timeval(my_time_t sec, ulong usec)
   {
     tv_sec= sec;
-    tv_usec= usec;
+    /*
+      Since tv_usec is not always of type ulong, cast usec parameter
+      explicitly to uint to avoid compiler warnings about losing
+      integer precision.
+    */
+    DBUG_ASSERT(usec < 1000000);
+    tv_usec= (uint)usec;
   }
   explicit Timeval(const timeval &tv)
    :timeval(tv)

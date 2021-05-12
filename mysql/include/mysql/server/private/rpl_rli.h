@@ -240,7 +240,8 @@ public:
     threads, the SQL thread sets it to unblock the I/O thread and make it
     temporarily forget about the constraint.
   */
-  ulonglong log_space_limit,log_space_total;
+  ulonglong log_space_limit;
+  Atomic_counter<uint64> log_space_total;
   bool ignore_log_space_limit;
 
   /*
@@ -273,7 +274,7 @@ public:
     Needed for problems when slave stops and we want to restart it
     skipping one or more events in the master log that have caused
     errors, and have been manually applied by DBA already.
-    Must be ulong as it's refered to from set_var.cc
+    Must be ulong as it's referred to from set_var.cc
   */
   volatile ulonglong slave_skip_counter;
   ulonglong max_relay_log_size;
